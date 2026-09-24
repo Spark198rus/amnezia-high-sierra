@@ -1,0 +1,362 @@
+diff --git a/device/go120compat.go b/device/go120compat.go
+new file mode 100644
+index 0000000..4126042
+--- /dev/null
++++ b/device/go120compat.go
+@@ -0,0 +1,40 @@
++/* SPDX-License-Identifier: MIT
++ *
++ * Copyright (C) 2017-2025 WireGuard LLC. All Rights Reserved.
++ */
++
++package device
++
++// Stand-ins for the Go 1.21+ min/max/clear builtins and slices.Grow, so this
++// package still builds with Go 1.20, the last Go release that runs on
++// macOS 10.13 High Sierra.
++
++type ordered interface {
++	~int | ~int8 | ~int16 | ~int32 | ~int64 |
++		~uint | ~uint8 | ~uint16 | ~uint32 | ~uint64 | ~uintptr |
++		~float32 | ~float64
++}
++
++func maxOf[T ordered](a, b T) T {
++	if a > b {
++		return a
++	}
++	return b
++}
++
++func zeroBytes(b []byte) {
++	for i := range b {
++		b[i] = 0
++	}
++}
++
++// growBytes mirrors slices.Grow for byte slices.
++func growBytes(s []byte, n int) []byte {
++	if n < 0 {
++		panic("cannot be negative")
++	}
++	if n -= cap(s) - len(s); n > 0 {
++		s = append(s[:cap(s)], make([]byte, n)...)[:len(s)]
++	}
++	return s
++}
+diff --git a/device/noise-protocol.go b/device/noise-protocol.go
+index c49f412..031f72e 100644
+--- a/device/noise-protocol.go
++++ b/device/noise-protocol.go
+@@ -635,7 +635,7 @@ func (device *Device) JunkPackets() [][]byte {
+ 	min := device.junk.min.Load()
+ 	max := device.junk.max.Load()
+ 
+-	for range device.junk.count.Load() {
++	for n := device.junk.count.Load(); n > 0; n-- {
+ 		buf := make([]byte, min+fastrandn(max-min))
+ 		rand.Read(buf)
+ 		bufs = append(bufs, buf)
+diff --git a/device/receive.go b/device/receive.go
+index ec29b1a..66e58c3 100644
+--- a/device/receive.go
++++ b/device/receive.go
+@@ -100,13 +100,13 @@ func (device *Device) RoutineReceiveIncoming(
+ 		typeHashBuf [4]byte
+ 	)
+ 
+-	for i := range maxBatchSize {
++	for i := 0; i < maxBatchSize; i++ {
+ 		bufsArrs[i] = device.GetMessageBuffer()
+ 		bufs[i] = bufsArrs[i][:]
+ 	}
+ 
+ 	defer func() {
+-		for i := range maxBatchSize {
++		for i := 0; i < maxBatchSize; i++ {
+ 			if bufsArrs[i] != nil {
+ 				device.PutMessageBuffer(bufsArrs[i])
+ 			}
+@@ -148,7 +148,7 @@ func (device *Device) RoutineReceiveIncoming(
+ 			}
+ 
+ 			typeHash := typeHashBuf[:]
+-			clear(typeHash)
++			zeroBytes(typeHash)
+ 			if cip != nil {
+ 				cip.XORKeyStream(typeHash, typeHash)
+ 			}
+@@ -596,7 +596,7 @@ func (peer *Peer) RoutineSequentialReceiver(maxBatchSize int) {
+ }
+ 
+ func applyHash(dst, src, hash []byte) {
+-	for i := range len(dst) {
++	for i := 0; i < len(dst); i++ {
+ 		dst[i] = src[i] ^ hash[i]
+ 	}
+ }
+diff --git a/device/send.go b/device/send.go
+index 4a303d2..d4820b3 100644
+--- a/device/send.go
++++ b/device/send.go
+@@ -12,7 +12,6 @@ import (
+ 	"errors"
+ 	"net"
+ 	"os"
+-	"slices"
+ 	"sync"
+ 	"time"
+ 
+@@ -147,7 +146,7 @@ func (peer *Peer) SendHandshakeInitiation(isRetry bool) error {
+ 	sendBuffer = append(sendBuffer, peer.device.JunkPackets()...)
+ 
+ 	padding := int(peer.device.paddings.init.Load())
+-	trailerLen := max(peer.randomTrailer(padding+MessageInitiationSize), 0)
++	trailerLen := maxOf(peer.randomTrailer(padding+MessageInitiationSize), 0)
+ 
+ 	buf := make([]byte, padding+MessageInitiationSize+trailerLen)
+ 
+@@ -197,7 +196,7 @@ func (peer *Peer) SendHandshakeResponse() error {
+ 	}
+ 
+ 	padding := int(peer.device.paddings.response.Load())
+-	trailerLen := max(peer.randomTrailer(padding+MessageResponseSize), 0)
++	trailerLen := maxOf(peer.randomTrailer(padding+MessageResponseSize), 0)
+ 
+ 	buf := make([]byte, padding+MessageResponseSize+trailerLen)
+ 
+@@ -261,7 +260,7 @@ func (device *Device) SendHandshakeCookie(initiatingElem *QueueHandshakeElement)
+ 	}
+ 
+ 	padding := int(device.paddings.cookie.Load())
+-	trailerLen := max(device.randomTrailer(padding+MessageCookieReplySize), 0)
++	trailerLen := maxOf(device.randomTrailer(padding+MessageCookieReplySize), 0)
+ 
+ 	buf := make([]byte, padding+MessageCookieReplySize+trailerLen)
+ 
+@@ -621,9 +620,9 @@ func (device *Device) RoutineEncryption(id int) {
+ 
+ 			// append trailing zeroes
+ 			oldLen := len(elem.packet)
+-			elem.packet = slices.Grow(elem.packet, paddingSize)
++			elem.packet = growBytes(elem.packet, paddingSize)
+ 			elem.packet = elem.packet[:oldLen+paddingSize]
+-			clear(elem.packet[oldLen:])
++			zeroBytes(elem.packet[oldLen:])
+ 
+ 			// encrypt content and release to consumer
+ 
+diff --git a/device/timers.go b/device/timers.go
+index 4a5499d..ac15af8 100644
+--- a/device/timers.go
++++ b/device/timers.go
+@@ -284,7 +284,7 @@ func (device *Device) keyRefreshTimeoutReceiving() time.Duration {
+ 		rekeyTimeout = time.Duration(t.Lo()) * time.Second
+ 	}
+ 
+-	return max(0, rejectAfterTime-keepaliveTimeout-rekeyTimeout)
++	return maxOf(0, rejectAfterTime-keepaliveTimeout-rekeyTimeout)
+ }
+ 
+ func (device *Device) keychainExpireTime() time.Duration {
+diff --git a/go.mod b/go.mod
+index 6493e57..4960010 100644
+--- a/go.mod
++++ b/go.mod
+@@ -1,35 +1,18 @@
+ module github.com/amnezia-vpn/amneziawg-go/v3
+ 
+-go 1.25.0
++go 1.20
+ 
+ require (
+-	github.com/goccy/go-yaml v1.17.1
+ 	go.uber.org/atomic v1.11.0
+-	golang.getoutline.org/sdk v0.0.23
+-	golang.getoutline.org/sdk/x v0.2.0
+-	golang.org/x/crypto v0.42.0
+-	golang.org/x/net v0.44.0
+-	golang.org/x/sys v0.36.0
++	golang.org/x/crypto v0.33.0
++	golang.org/x/net v0.35.0
++	golang.org/x/sys v0.30.0
+ 	golang.zx2c4.com/wintun v0.0.0-20230126152724-0fa3db229ce2
+ 	gvisor.dev/gvisor v0.0.0-20231202080848-1f7806d17489
+ )
+ 
+ require (
+-	github.com/go-task/slim-sprig v0.0.0-20230315185526-52ccab3ef572 // indirect
+ 	github.com/google/btree v1.1.3 // indirect
+-	github.com/google/pprof v0.0.0-20211214055906-6f57359322fd // indirect
+-	github.com/gorilla/websocket v1.5.3 // indirect
+-	github.com/onsi/ginkgo/v2 v2.12.0 // indirect
+-	github.com/quic-go/qpack v0.5.1 // indirect
+-	github.com/quic-go/quic-go v0.48.1 // indirect
+-	github.com/shadowsocks/go-shadowsocks2 v0.1.5 // indirect
+ 	github.com/stretchr/testify v1.10.0 // indirect
+-	go.uber.org/mock v0.4.0 // indirect
+-	golang.org/x/exp v0.0.0-20240506185415-9bf2ced13842 // indirect
+-	golang.org/x/mobile v0.0.0-20240520174638-fa72addaaa1b // indirect
+-	golang.org/x/mod v0.28.0 // indirect
+-	golang.org/x/sync v0.17.0 // indirect
+-	golang.org/x/text v0.29.0 // indirect
+ 	golang.org/x/time v0.9.0 // indirect
+-	golang.org/x/tools v0.37.0 // indirect
+ )
+diff --git a/tun/checksum.go b/tun/checksum.go
+index b489c56..71279f7 100644
+--- a/tun/checksum.go
++++ b/tun/checksum.go
+@@ -8,78 +8,78 @@ import (
+ // TODO: Explore SIMD and/or other assembly optimizations.
+ func checksumNoFold(b []byte, initial uint64) uint64 {
+ 	tmp := make([]byte, 8)
+-	binary.NativeEndian.PutUint64(tmp, initial)
++	nativeEndian.PutUint64(tmp, initial)
+ 	ac := binary.BigEndian.Uint64(tmp)
+ 	var carry uint64
+ 
+ 	for len(b) >= 128 {
+-		ac, carry = bits.Add64(ac, binary.NativeEndian.Uint64(b[:8]), 0)
+-		ac, carry = bits.Add64(ac, binary.NativeEndian.Uint64(b[8:16]), carry)
+-		ac, carry = bits.Add64(ac, binary.NativeEndian.Uint64(b[16:24]), carry)
+-		ac, carry = bits.Add64(ac, binary.NativeEndian.Uint64(b[24:32]), carry)
+-		ac, carry = bits.Add64(ac, binary.NativeEndian.Uint64(b[32:40]), carry)
+-		ac, carry = bits.Add64(ac, binary.NativeEndian.Uint64(b[40:48]), carry)
+-		ac, carry = bits.Add64(ac, binary.NativeEndian.Uint64(b[48:56]), carry)
+-		ac, carry = bits.Add64(ac, binary.NativeEndian.Uint64(b[56:64]), carry)
+-		ac, carry = bits.Add64(ac, binary.NativeEndian.Uint64(b[64:72]), carry)
+-		ac, carry = bits.Add64(ac, binary.NativeEndian.Uint64(b[72:80]), carry)
+-		ac, carry = bits.Add64(ac, binary.NativeEndian.Uint64(b[80:88]), carry)
+-		ac, carry = bits.Add64(ac, binary.NativeEndian.Uint64(b[88:96]), carry)
+-		ac, carry = bits.Add64(ac, binary.NativeEndian.Uint64(b[96:104]), carry)
+-		ac, carry = bits.Add64(ac, binary.NativeEndian.Uint64(b[104:112]), carry)
+-		ac, carry = bits.Add64(ac, binary.NativeEndian.Uint64(b[112:120]), carry)
+-		ac, carry = bits.Add64(ac, binary.NativeEndian.Uint64(b[120:128]), carry)
++		ac, carry = bits.Add64(ac, nativeEndian.Uint64(b[:8]), 0)
++		ac, carry = bits.Add64(ac, nativeEndian.Uint64(b[8:16]), carry)
++		ac, carry = bits.Add64(ac, nativeEndian.Uint64(b[16:24]), carry)
++		ac, carry = bits.Add64(ac, nativeEndian.Uint64(b[24:32]), carry)
++		ac, carry = bits.Add64(ac, nativeEndian.Uint64(b[32:40]), carry)
++		ac, carry = bits.Add64(ac, nativeEndian.Uint64(b[40:48]), carry)
++		ac, carry = bits.Add64(ac, nativeEndian.Uint64(b[48:56]), carry)
++		ac, carry = bits.Add64(ac, nativeEndian.Uint64(b[56:64]), carry)
++		ac, carry = bits.Add64(ac, nativeEndian.Uint64(b[64:72]), carry)
++		ac, carry = bits.Add64(ac, nativeEndian.Uint64(b[72:80]), carry)
++		ac, carry = bits.Add64(ac, nativeEndian.Uint64(b[80:88]), carry)
++		ac, carry = bits.Add64(ac, nativeEndian.Uint64(b[88:96]), carry)
++		ac, carry = bits.Add64(ac, nativeEndian.Uint64(b[96:104]), carry)
++		ac, carry = bits.Add64(ac, nativeEndian.Uint64(b[104:112]), carry)
++		ac, carry = bits.Add64(ac, nativeEndian.Uint64(b[112:120]), carry)
++		ac, carry = bits.Add64(ac, nativeEndian.Uint64(b[120:128]), carry)
+ 		ac += carry
+ 		b = b[128:]
+ 	}
+ 	if len(b) >= 64 {
+-		ac, carry = bits.Add64(ac, binary.NativeEndian.Uint64(b[:8]), 0)
+-		ac, carry = bits.Add64(ac, binary.NativeEndian.Uint64(b[8:16]), carry)
+-		ac, carry = bits.Add64(ac, binary.NativeEndian.Uint64(b[16:24]), carry)
+-		ac, carry = bits.Add64(ac, binary.NativeEndian.Uint64(b[24:32]), carry)
+-		ac, carry = bits.Add64(ac, binary.NativeEndian.Uint64(b[32:40]), carry)
+-		ac, carry = bits.Add64(ac, binary.NativeEndian.Uint64(b[40:48]), carry)
+-		ac, carry = bits.Add64(ac, binary.NativeEndian.Uint64(b[48:56]), carry)
+-		ac, carry = bits.Add64(ac, binary.NativeEndian.Uint64(b[56:64]), carry)
++		ac, carry = bits.Add64(ac, nativeEndian.Uint64(b[:8]), 0)
++		ac, carry = bits.Add64(ac, nativeEndian.Uint64(b[8:16]), carry)
++		ac, carry = bits.Add64(ac, nativeEndian.Uint64(b[16:24]), carry)
++		ac, carry = bits.Add64(ac, nativeEndian.Uint64(b[24:32]), carry)
++		ac, carry = bits.Add64(ac, nativeEndian.Uint64(b[32:40]), carry)
++		ac, carry = bits.Add64(ac, nativeEndian.Uint64(b[40:48]), carry)
++		ac, carry = bits.Add64(ac, nativeEndian.Uint64(b[48:56]), carry)
++		ac, carry = bits.Add64(ac, nativeEndian.Uint64(b[56:64]), carry)
+ 		ac += carry
+ 		b = b[64:]
+ 	}
+ 	if len(b) >= 32 {
+-		ac, carry = bits.Add64(ac, binary.NativeEndian.Uint64(b[:8]), 0)
+-		ac, carry = bits.Add64(ac, binary.NativeEndian.Uint64(b[8:16]), carry)
+-		ac, carry = bits.Add64(ac, binary.NativeEndian.Uint64(b[16:24]), carry)
+-		ac, carry = bits.Add64(ac, binary.NativeEndian.Uint64(b[24:32]), carry)
++		ac, carry = bits.Add64(ac, nativeEndian.Uint64(b[:8]), 0)
++		ac, carry = bits.Add64(ac, nativeEndian.Uint64(b[8:16]), carry)
++		ac, carry = bits.Add64(ac, nativeEndian.Uint64(b[16:24]), carry)
++		ac, carry = bits.Add64(ac, nativeEndian.Uint64(b[24:32]), carry)
+ 		ac += carry
+ 		b = b[32:]
+ 	}
+ 	if len(b) >= 16 {
+-		ac, carry = bits.Add64(ac, binary.NativeEndian.Uint64(b[:8]), 0)
+-		ac, carry = bits.Add64(ac, binary.NativeEndian.Uint64(b[8:16]), carry)
++		ac, carry = bits.Add64(ac, nativeEndian.Uint64(b[:8]), 0)
++		ac, carry = bits.Add64(ac, nativeEndian.Uint64(b[8:16]), carry)
+ 		ac += carry
+ 		b = b[16:]
+ 	}
+ 	if len(b) >= 8 {
+-		ac, carry = bits.Add64(ac, binary.NativeEndian.Uint64(b[:8]), 0)
++		ac, carry = bits.Add64(ac, nativeEndian.Uint64(b[:8]), 0)
+ 		ac += carry
+ 		b = b[8:]
+ 	}
+ 	if len(b) >= 4 {
+-		ac, carry = bits.Add64(ac, uint64(binary.NativeEndian.Uint32(b[:4])), 0)
++		ac, carry = bits.Add64(ac, uint64(nativeEndian.Uint32(b[:4])), 0)
+ 		ac += carry
+ 		b = b[4:]
+ 	}
+ 	if len(b) >= 2 {
+-		ac, carry = bits.Add64(ac, uint64(binary.NativeEndian.Uint16(b[:2])), 0)
++		ac, carry = bits.Add64(ac, uint64(nativeEndian.Uint16(b[:2])), 0)
+ 		ac += carry
+ 		b = b[2:]
+ 	}
+ 	if len(b) == 1 {
+-		tmp := binary.NativeEndian.Uint16([]byte{b[0], 0})
++		tmp := nativeEndian.Uint16([]byte{b[0], 0})
+ 		ac, carry = bits.Add64(ac, uint64(tmp), 0)
+ 		ac += carry
+ 	}
+ 
+-	binary.NativeEndian.PutUint64(tmp, ac)
++	nativeEndian.PutUint64(tmp, ac)
+ 	return binary.BigEndian.Uint64(tmp)
+ }
+ 
+diff --git a/tun/nativeendian_big.go b/tun/nativeendian_big.go
+new file mode 100644
+index 0000000..9295b81
+--- /dev/null
++++ b/tun/nativeendian_big.go
+@@ -0,0 +1,13 @@
++/* SPDX-License-Identifier: MIT
++ *
++ * Copyright (C) 2017-2025 WireGuard LLC. All Rights Reserved.
++ */
++
++//go:build armbe || arm64be || m68k || mips || mips64 || mips64p32 || ppc || ppc64 || s390 || s390x || shbe || sparc || sparc64
++
++package tun
++
++import "encoding/binary"
++
++// nativeEndian stands in for binary.NativeEndian (Go 1.21+).
++var nativeEndian = binary.BigEndian
+diff --git a/tun/nativeendian_little.go b/tun/nativeendian_little.go
+new file mode 100644
+index 0000000..c6792b7
+--- /dev/null
++++ b/tun/nativeendian_little.go
+@@ -0,0 +1,13 @@
++/* SPDX-License-Identifier: MIT
++ *
++ * Copyright (C) 2017-2025 WireGuard LLC. All Rights Reserved.
++ */
++
++//go:build 386 || amd64 || arm || arm64 || loong64 || mips64le || mipsle || ppc64le || riscv64 || wasm
++
++package tun
++
++import "encoding/binary"
++
++// nativeEndian stands in for binary.NativeEndian (Go 1.21+).
++var nativeEndian = binary.LittleEndian

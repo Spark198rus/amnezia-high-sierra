@@ -1,0 +1,7 @@
+build/
+dist/
+
+# The repository's top-level .gitignore excludes these names.
+!Makefile
+!packaging/build-pkg.sh
+!third_party/amneziawg-go/Makefile
