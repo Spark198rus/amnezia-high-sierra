@@ -1,9 +1,10 @@
 name: 'Deploy workflow'
 
+# In this fork the upstream build only runs by hand (Actions tab > Deploy
+# workflow > Run workflow): its Apple jobs need AmneziaVPN's signing secrets,
+# which the fork doesn't have. The High Sierra client has its own workflow.
 on:
-  push:
-    branches:
-      - '**'
+  workflow_dispatch:
 
 env:
   QT_MIRROR: https://mirrors.ocf.berkeley.edu/qt/ # https://download.qt.io/static/mirrorlist/
