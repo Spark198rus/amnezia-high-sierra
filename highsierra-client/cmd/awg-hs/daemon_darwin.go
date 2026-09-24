@@ -23,11 +23,17 @@ import (
 )
 
 const (
-	statePath = "/var/run/awg-hs/state.json"
-	// savedPath keeps the last config that connected, so "up" with no
-	// argument can reconnect. It holds the private key, so only root reads it.
-	savedPath = "/Library/Application Support/AWG-HS/private/last.json"
-	adminGID  = 80
+	statePath      = "/var/run/awg-hs/state.json"
+	killSwitchPath = "/var/run/awg-hs/killswitch.json"
+
+	// privateDir is readable by root only: savedPath holds the last config
+	// that connected (with its private key), so "up" with no argument can
+	// reconnect.
+	privateDir   = "/Library/Application Support/AWG-HS/private"
+	savedPath    = privateDir + "/last.json"
+	settingsPath = privateDir + "/settings.json"
+
+	adminGID = 80
 )
 
 type savedConfig struct {
@@ -35,12 +41,20 @@ type savedConfig struct {
 	Config string `json:"config"`
 }
 
+type settings struct {
+	KillSwitch *bool `json:"killSwitch,omitempty"` // unset means on
+}
+
+func (s settings) killSwitchOn() bool { return s.KillSwitch == nil || *s.KillSwitch }
+
 type daemon struct {
 	verbose bool
+	ks      *tunnel.KillSwitch
 
-	mu     sync.Mutex
-	tunnel *tunnel.Tunnel
-	name   string
+	mu       sync.Mutex
+	tunnel   *tunnel.Tunnel
+	name     string
+	settings settings
 }
 
 func runDaemon(args []string) error {
@@ -70,7 +84,13 @@ func runDaemon(args []string) error {
 		return err
 	}
 
-	d := &daemon{verbose: *verbose}
+	d := &daemon{verbose: *verbose, ks: tunnel.LoadKillSwitch(killSwitchPath)}
+	if err := readJSON(settingsPath, &d.settings); err != nil && !errors.Is(err, os.ErrNotExist) {
+		log.Printf("reading %s: %v", settingsPath, err)
+	}
+	if !d.settings.killSwitchOn() {
+		d.ks.Disable()
+	}
 
 	sig := make(chan os.Signal, 1)
 	signal.Notify(sig, syscall.SIGTERM, syscall.SIGINT)
@@ -130,6 +150,10 @@ func (d *daemon) handle(req control.Request) control.Response {
 		err = d.up(req)
 	case control.CmdDown:
 		d.down()
+	case control.CmdKillSwitch:
+		if req.Enable != nil {
+			err = d.setKillSwitch(*req.Enable)
+		}
 	case control.CmdStatus:
 	default:
 		err = fmt.Errorf("unknown command %q", req.Command)
@@ -153,22 +177,57 @@ func (d *daemon) up(req control.Request) error {
 		return err
 	}
 
-	d.down()
+	// Look the server up first: while an old tunnel is up, its DNS works
+	// even with the kill switch on.
+	if err := tunnel.Resolve(cfg); err != nil {
+		if d.tunnel == nil && d.ks.Active() {
+			return fmt.Errorf("%w\nThe kill switch is blocking the internet, so the server's name can't be looked up.\n"+
+				"Run \"awg-hs down\" to lift it, then connect again.", err)
+		}
+		return err
+	}
+
+	// When switching servers the kill switch stays on throughout; the new
+	// tunnel's rules replace the old ones.
+	blocking := d.ks.Active()
+	d.closeTunnel()
+	var ks *tunnel.KillSwitch
+	if d.settings.killSwitchOn() {
+		ks = d.ks
+	}
 	log.Printf("connecting %q", saved.Name)
-	t, err := tunnel.Start(cfg, tunnel.Options{Verbose: d.verbose, StatePath: statePath})
+	t, err := tunnel.Start(cfg, tunnel.Options{Verbose: d.verbose, StatePath: statePath, KillSwitch: ks})
 	if err != nil {
 		log.Printf("connecting %q failed: %v", saved.Name, err)
+		// A first connection that fails must not leave the Mac cut off; a
+		// failed switch keeps blocking, as the tunnel it replaced did.
+		if !blocking {
+			d.ks.Disable()
+		}
 		return err
+	}
+	if ks == nil {
+		d.ks.Disable()
 	}
 	d.tunnel, d.name = t, saved.Name
 	log.Printf("connected %q on %s", saved.Name, t.Info().Interface)
-	if err := storeSaved(saved); err != nil {
+	if err := writeJSON(savedPath, saved); err != nil {
 		log.Printf("saving the config: %v", err)
 	}
 	return nil
 }
 
+// down disconnects and lifts the kill switch: disconnecting on purpose
+// means going back to the normal internet.
 func (d *daemon) down() {
+	d.closeTunnel()
+	if d.ks.Active() {
+		log.Printf("lifting the kill switch")
+		d.ks.Disable()
+	}
+}
+
+func (d *daemon) closeTunnel() {
 	if d.tunnel == nil {
 		return
 	}
@@ -177,8 +236,27 @@ func (d *daemon) down() {
 	d.tunnel, d.name = nil, ""
 }
 
+func (d *daemon) setKillSwitch(on bool) error {
+	d.settings.KillSwitch = &on
+	if err := writeJSON(settingsPath, d.settings); err != nil {
+		log.Printf("saving the settings: %v", err)
+	}
+	log.Printf("kill switch turned %s", onOff(on))
+	if on {
+		if d.tunnel != nil {
+			return d.tunnel.SetKillSwitch(d.ks)
+		}
+		return nil
+	}
+	if d.tunnel != nil {
+		d.tunnel.SetKillSwitch(nil)
+	}
+	d.ks.Disable()
+	return nil
+}
+
 func (d *daemon) status() *control.Status {
-	st := &control.Status{}
+	st := &control.Status{KillSwitch: d.settings.killSwitchOn(), Blocking: d.ks.Active()}
 	if saved, err := loadSaved(); err == nil {
 		st.HasSavedConfig, st.SavedName = true, saved.Name
 	}
@@ -202,28 +280,33 @@ func (d *daemon) status() *control.Status {
 
 func loadSaved() (savedConfig, error) {
 	var s savedConfig
-	b, err := os.ReadFile(savedPath)
-	if err != nil {
-		return s, err
-	}
-	err = json.Unmarshal(b, &s)
+	err := readJSON(savedPath, &s)
 	if err == nil && s.Config == "" {
 		err = errors.New("empty saved config")
 	}
 	return s, err
 }
 
-func storeSaved(s savedConfig) error {
-	if err := os.MkdirAll(filepath.Dir(savedPath), 0o700); err != nil {
-		return err
-	}
-	b, err := json.Marshal(s)
+func readJSON(path string, v interface{}) error {
+	b, err := os.ReadFile(path)
 	if err != nil {
 		return err
 	}
-	tmp := savedPath + ".tmp"
+	return json.Unmarshal(b, v)
+}
+
+// writeJSON replaces path atomically with a root-only file.
+func writeJSON(path string, v interface{}) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return err
+	}
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+	tmp := path + ".tmp"
 	if err := os.WriteFile(tmp, b, 0o600); err != nil {
 		return err
 	}
-	return os.Rename(tmp, savedPath)
+	return os.Rename(tmp, path)
 }

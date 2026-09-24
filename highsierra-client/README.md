@@ -15,8 +15,9 @@ It has two parts in one program, `awg-hs`:
 
 A menu-bar app is planned next; it will use the same service.
 
-> **Status:** version 0.1 compiles, and the parts that can be tested off a Mac
-> are tested, but it has **not yet been run on a real High Sierra Mac**.
+> **Status:** version 0.1 has been used on a real High Sierra Mac: it
+> installs, connects, and blocked sites open. The kill switch (0.2) has **not
+> yet been run on a real Mac**.
 
 ## What it supports
 
@@ -30,13 +31,13 @@ A menu-bar app is planned next; it will use the same service.
   listed networks).
 - Moving between networks: the route to the server and the DNS settings are
   kept up to date as the Mac changes Wi-Fi networks or wakes from sleep.
+- A kill switch, on by default (see below). It also stops IPv6 and DNS
+  traffic from bypassing the tunnel.
 
 Not supported yet:
 
-- **Kill switch.** If the tunnel drops, traffic goes out directly.
-- **IPv6 leak blocking.** If macOS refuses the IPv6 routes, `awg-hs status`
-  shows a warning, and IPv6 traffic bypasses the tunnel.
 - **Connecting automatically at startup.** After a restart, run `awg-hs up`.
+  The kill switch doesn't survive a restart either.
 
 ## Getting a config
 
@@ -52,8 +53,8 @@ artifacts of the latest "High Sierra client" run on the repository's Actions
 tab. (On a fork, Actions must be enabled first.) Then in Terminal:
 
 ```sh
-tar xzf awg-hs-0.1.0-macos-x86_64.tar.gz
-cd awg-hs-0.1.0-macos-x86_64
+tar xzf awg-hs-0.2.0-macos-x86_64.tar.gz
+cd awg-hs-0.2.0-macos-x86_64
 sudo ./install.sh
 ```
 
@@ -74,6 +75,38 @@ awg-hs up                                # reconnect with the last config
 `awg-hs check FILE` validates a config without connecting, and
 `awg-hs convert 'vpn://...' > my.conf` saves the config inside a key as a file.
 
+## Kill switch
+
+While you're connected, the kill switch uses the Mac's built-in firewall (pf,
+the same one the AmneziaVPN app's kill switch uses) to block everything that
+would leave the Mac outside the tunnel. It still allows:
+
+- the encrypted traffic to your VPN server,
+- the local network (router, printers, AirPlay), and
+- what the Mac needs to join a network (DHCP).
+
+If the config sets DNS servers, DNS is only allowed to those servers, so
+lookups can't go to your provider's DNS. IPv6 outside the tunnel is blocked
+too.
+
+If the tunnel stops working (the server goes away, or the service crashes),
+the block **stays**, so nothing leaks. It lifts only when you run
+`awg-hs down`. Connecting to another server keeps it on throughout.
+
+```sh
+awg-hs killswitch          # show whether it's on
+awg-hs killswitch off      # turn it off (takes effect at once)
+awg-hs killswitch on       # turn it back on
+```
+
+Things to know:
+
+- **Hotel or café Wi-Fi login pages** can't load while it's blocking. Run
+  `awg-hs down`, log in, then `awg-hs up`.
+- **If the internet stops working after connecting**, run `awg-hs down` to
+  restore it, and `awg-hs killswitch off` if it happens every time. As a last
+  resort, `sudo pfctl -a awg-hs -F rules` removes the rules directly.
+
 If `status` shows **Handshake: none yet**, the server isn't answering. Check
 that the server is running and that the config is current.
 
@@ -92,7 +125,8 @@ that the server is running and that the config is current.
 
   Reinstalling puts the original file back.
 - If the service stops unexpectedly, launchd restarts it. The restarted
-  service first undoes the routes and DNS changes the old one made.
+  service first undoes the routes and DNS changes the old one made. With the
+  kill switch on, the block stays until you reconnect or run `awg-hs down`.
 - All DNS changes live only in memory, so a restart always clears them.
 
 ## Uninstalling
@@ -127,7 +161,9 @@ these steps on every push that touches this folder.
   and DNS with `ifconfig`, `route` and `scutil`, the same way `awg-quick` and
   the AmneziaVPN macOS service do. A full-tunnel route is added as two halves
   (`0.0.0.0/1` and `128.0.0.0/1`) so the normal default route stays in place.
-  The server's own address gets a route outside the tunnel.
+  The server's own address gets a route outside the tunnel. The kill switch
+  is a pf ruleset in an anchor called `awg-hs`, referenced from the end of
+  the main ruleset (`sudo pfctl -a awg-hs -sr` shows it).
 - `internal/control`: the JSON protocol on `/var/run/awg-hs.sock` between the
   command-line tool and the service.
 - `cmd/awg-hs`: the program itself.

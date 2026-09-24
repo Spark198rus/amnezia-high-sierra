@@ -63,12 +63,17 @@ func (in *Info) applyIpcGet(out string) {
 	flush()
 }
 
-// resolveEndpoints fills in each peer's EndpointAddr, preferring IPv4. It
-// runs before any routes change, so lookups use the normal network.
+// Resolve fills in each peer's EndpointAddr, preferring IPv4. Start does
+// this itself; calling it first lets a new server's name be looked up while
+// the old tunnel (and its DNS) is still up.
+func Resolve(cfg *config.Config) error {
+	return resolveEndpoints(cfg)
+}
+
 func resolveEndpoints(cfg *config.Config) error {
 	for i := range cfg.Peers {
 		p := &cfg.Peers[i]
-		if p.Endpoint == "" {
+		if p.Endpoint == "" || p.EndpointAddr.IsValid() {
 			continue
 		}
 		host, port, err := p.EndpointHostPort()

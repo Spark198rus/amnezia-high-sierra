@@ -26,8 +26,9 @@ import (
 
 // Options configures a tunnel.
 type Options struct {
-	Verbose   bool   // log amneziawg-go's debug output
-	StatePath string // where to record changes for crash recovery
+	Verbose    bool        // log amneziawg-go's debug output
+	StatePath  string      // where to record changes for crash recovery
+	KillSwitch *KillSwitch // nil to leave traffic outside the tunnel alone
 }
 
 // Tunnel is a running AmneziaWG tunnel.
@@ -73,6 +74,14 @@ func Start(cfg *config.Config, opts Options) (_ *Tunnel, err error) {
 		return nil, err
 	}
 	t.state.Interface = t.ifname
+
+	// With the kill switch, open a way for the new tunnel before it sends
+	// its first handshake.
+	if opts.KillSwitch != nil {
+		if err := opts.KillSwitch.apply(t.killSwitchSpec()); err != nil {
+			return nil, fmt.Errorf("turning on the kill switch: %w", err)
+		}
+	}
 
 	level := device.LogLevelError
 	if opts.Verbose {
@@ -141,6 +150,28 @@ func (t *Tunnel) Close() {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	t.teardown()
+}
+
+// SetKillSwitch turns the kill switch on (ks) or off (nil) for this tunnel.
+// Turning it off here only stops maintaining it; the caller lifts it.
+func (t *Tunnel) SetKillSwitch(ks *KillSwitch) error {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.opts.KillSwitch = ks
+	if ks == nil {
+		return nil
+	}
+	return ks.apply(t.killSwitchSpec())
+}
+
+func (t *Tunnel) killSwitchSpec() killSwitchSpec {
+	spec := killSwitchSpec{Interface: t.ifname, DNS: t.cfg.Interface.DNS}
+	for _, p := range t.cfg.Peers {
+		if p.EndpointAddr.IsValid() {
+			spec.Endpoints = append(spec.Endpoints, p.EndpointAddr)
+		}
+	}
+	return spec
 }
 
 // Info reports the tunnel's current state.
@@ -289,6 +320,10 @@ func (t *Tunnel) refresh() {
 		if changed || !hostRouteOK(ep, t.ifname, t.gatewayFor(ep) == "") {
 			t.setEndpointRoute(ep)
 		}
+	}
+
+	if t.opts.KillSwitch != nil {
+		t.opts.KillSwitch.ensure()
 	}
 
 	if t.dns != nil {

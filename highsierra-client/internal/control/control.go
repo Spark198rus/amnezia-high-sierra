@@ -21,9 +21,10 @@ const SocketPath = "/var/run/awg-hs.sock"
 
 // Commands.
 const (
-	CmdUp     = "up"
-	CmdDown   = "down"
-	CmdStatus = "status"
+	CmdUp         = "up"
+	CmdDown       = "down"
+	CmdStatus     = "status"
+	CmdKillSwitch = "killswitch" // Enable set: turn on or off; unset: report
 )
 
 // Request is sent by a client.
@@ -33,6 +34,7 @@ type Request struct {
 	// with the last config that connected.
 	Config string `json:"config,omitempty"`
 	Name   string `json:"name,omitempty"` // a label for the connection
+	Enable *bool  `json:"enable,omitempty"`
 }
 
 // Response is the daemon's answer. Status is set for every successful
@@ -57,6 +59,10 @@ type Status struct {
 	Warnings       []string `json:"warnings,omitempty"`
 	HasSavedConfig bool     `json:"hasSavedConfig,omitempty"`
 	SavedName      string   `json:"savedName,omitempty"`
+	// KillSwitch is the setting; Blocking is whether its rules are in force,
+	// which they stay after the tunnel fails until "down".
+	KillSwitch bool `json:"killSwitch"`
+	Blocking   bool `json:"blocking,omitempty"`
 }
 
 const maxMessage = 1 << 20

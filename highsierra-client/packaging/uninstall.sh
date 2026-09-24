@@ -12,9 +12,21 @@ if [ "$(id -u)" -ne 0 ]; then
 	exit 1
 fi
 
-# Stopping the service disconnects the tunnel and restores DNS.
+# Stopping the service disconnects the tunnel, restores DNS and lifts the
+# kill switch.
 if [ -f "$PLIST" ]; then
 	launchctl bootout system "$PLIST" 2>/dev/null || launchctl unload "$PLIST" 2>/dev/null || true
+fi
+
+# Lift the kill switch here too, in case the service wasn't running to do it.
+KS=/var/run/awg-hs/killswitch.json
+if [ -f "$KS" ]; then
+	pfctl -a awg-hs -F rules 2>/dev/null || true
+	pfctl -a awg-hs -F Tables 2>/dev/null || true
+	TOKEN=$(sed -n 's/.*"token":"\([0-9]*\)".*/\1/p' "$KS")
+	if [ -n "$TOKEN" ]; then
+		pfctl -X "$TOKEN" 2>/dev/null || true
+	fi
 fi
 
 rm -f "$PLIST" /var/run/awg-hs.sock

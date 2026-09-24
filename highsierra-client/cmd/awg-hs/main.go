@@ -29,6 +29,7 @@ Usage:
                                      the last config that worked
   awg-hs down                        disconnect
   awg-hs status                      show the connection
+  awg-hs killswitch [on | off]       show or change the kill switch (on at first)
   awg-hs check FILE | vpn://KEY      check a config without connecting
   awg-hs convert vpn://KEY           print the AmneziaWG .conf inside a key
   awg-hs version
@@ -37,6 +38,10 @@ Usage:
 
 FILE is an AmneziaWG .conf exported from the AmneziaVPN app, and KEY is a
 vpn:// key for a self-hosted AmneziaWG server. "-" reads from standard input.
+
+While connected, the kill switch blocks everything that would leave the Mac
+outside the tunnel, apart from the local network. If the tunnel fails it
+keeps blocking until "awg-hs up" or "awg-hs down".
 `
 
 func main() {
@@ -52,6 +57,8 @@ func main() {
 		err = cmdSimple(control.CmdDown)
 	case "status":
 		err = cmdSimple(control.CmdStatus)
+	case "killswitch", "kill-switch":
+		err = cmdKillSwitch(args)
 	case "check":
 		err = cmdCheck(args)
 	case "convert":
@@ -108,6 +115,37 @@ func cmdUp(args []string) error {
 	return call(req)
 }
 
+func cmdKillSwitch(args []string) error {
+	req := control.Request{Command: control.CmdKillSwitch}
+	switch {
+	case len(args) == 0:
+	case len(args) == 1 && (args[0] == "on" || args[0] == "off"):
+		on := args[0] == "on"
+		req.Enable = &on
+	default:
+		return errors.New("usage: awg-hs killswitch [on | off]")
+	}
+	resp, err := control.Call(req)
+	if err != nil {
+		return unreachable(err)
+	}
+	if !resp.OK {
+		return errors.New(resp.Error)
+	}
+	st := resp.Status
+	fmt.Printf("Kill switch: %s\n", onOff(st.KillSwitch))
+	switch {
+	case st.KillSwitch && st.Connected:
+		fmt.Println("Nothing can leave this Mac outside the tunnel, apart from the local network.")
+	case st.KillSwitch:
+		fmt.Println("It will block traffic outside the tunnel from the next \"awg-hs up\".")
+	default:
+		fmt.Println("If the tunnel stops working, traffic goes out directly.")
+	}
+	printBlocking(st)
+	return nil
+}
+
 func cmdSimple(command string) error {
 	return call(control.Request{Command: command})
 }
@@ -115,8 +153,7 @@ func cmdSimple(command string) error {
 func call(req control.Request) error {
 	resp, err := control.Call(req)
 	if err != nil {
-		return fmt.Errorf("cannot reach the awg-hs service (%v).\n"+
-			"Is it installed? Only administrator accounts can use it; otherwise try sudo.", err)
+		return unreachable(err)
 	}
 	if resp.Status != nil {
 		printStatus(resp.Status)
@@ -127,31 +164,55 @@ func call(req control.Request) error {
 	return nil
 }
 
+func unreachable(err error) error {
+	return fmt.Errorf("cannot reach the awg-hs service (%v).\n"+
+		"Is it installed? Only administrator accounts can use it; otherwise try sudo.", err)
+}
+
+func onOff(b bool) string {
+	if b {
+		return "on"
+	}
+	return "off"
+}
+
+// printBlocking explains a kill switch that blocks without a tunnel.
+func printBlocking(st *control.Status) {
+	if st.Blocking && !st.Connected {
+		fmt.Println()
+		fmt.Println("The kill switch is blocking all traffic outside the tunnel, because the tunnel")
+		fmt.Println("is not running. Run \"awg-hs up\" to reconnect, or \"awg-hs down\" to go back")
+		fmt.Println("to the normal internet.")
+	}
+}
+
 func printStatus(st *control.Status) {
 	if !st.Connected {
 		fmt.Println("Disconnected.")
-		if st.HasSavedConfig {
+		if st.HasSavedConfig && !st.Blocking {
 			fmt.Printf("Run \"awg-hs up\" to reconnect to %s.\n", st.SavedName)
 		}
+		printBlocking(st)
 		return
 	}
 	fmt.Printf("Connected: %s (%s)\n", st.Name, st.Interface)
-	fmt.Printf("  Server:     %s\n", st.Endpoint)
-	fmt.Printf("  Addresses:  %s\n", strings.Join(st.Addresses, ", "))
+	fmt.Printf("  Server:      %s\n", st.Endpoint)
+	fmt.Printf("  Addresses:   %s\n", strings.Join(st.Addresses, ", "))
 	since := time.Unix(st.Since, 0)
-	fmt.Printf("  Since:      %s (%s)\n", since.Format("2006-01-02 15:04:05"), ago(since))
+	fmt.Printf("  Since:       %s (%s)\n", since.Format("2006-01-02 15:04:05"), ago(since))
 	if st.LastHandshake != 0 {
-		fmt.Printf("  Handshake:  %s ago\n", ago(time.Unix(st.LastHandshake, 0)))
+		fmt.Printf("  Handshake:   %s ago\n", ago(time.Unix(st.LastHandshake, 0)))
 	} else {
-		fmt.Println("  Handshake:  none yet")
+		fmt.Println("  Handshake:   none yet")
 		if time.Since(since) > 15*time.Second {
-			fmt.Println("              (the server is not answering: check its address and port,")
-			fmt.Println("               and that the config is current)")
+			fmt.Println("               (the server is not answering: check its address and port,")
+			fmt.Println("                and that the config is current)")
 		}
 	}
-	fmt.Printf("  Traffic:    %s received, %s sent\n", bytesText(st.RxBytes), bytesText(st.TxBytes))
+	fmt.Printf("  Traffic:     %s received, %s sent\n", bytesText(st.RxBytes), bytesText(st.TxBytes))
+	fmt.Printf("  Kill switch: %s\n", onOff(st.KillSwitch))
 	for _, w := range st.Warnings {
-		fmt.Println("  Warning:   ", w)
+		fmt.Println("  Warning:    ", w)
 	}
 }
 

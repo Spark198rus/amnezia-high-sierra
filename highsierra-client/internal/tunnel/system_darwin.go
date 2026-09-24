@@ -40,6 +40,23 @@ func runInput(stdin, name string, args ...string) (string, error) {
 	return string(out), nil
 }
 
+// runStdout is runInput, but returns only standard output. pfctl prints
+// notices such as "No ALTQ support in kernel" on standard error.
+func runStdout(stdin, name string, args ...string) (string, error) {
+	cmd := exec.Command(name, args...)
+	if stdin != "" {
+		cmd.Stdin = strings.NewReader(stdin)
+	}
+	var stderr strings.Builder
+	cmd.Stderr = &stderr
+	out, err := cmd.Output()
+	if err != nil {
+		return string(out), fmt.Errorf("%s %s: %v: %s",
+			filepath.Base(name), strings.Join(args, " "), err, strings.TrimSpace(stderr.String()))
+	}
+	return string(out), nil
+}
+
 func familyFlag(a netip.Addr) string {
 	if a.Is4() {
 		return "-inet"
