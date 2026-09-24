@@ -1,6 +1,7 @@
 #!/bin/sh
 # Stop a running copy before the files are replaced; that also disconnects
 # the tunnel and restores DNS.
+killall AWG-HS 2>/dev/null || true
 PLIST=/Library/LaunchDaemons/io.github.spark198rus.awg-hs.plist
 if [ -f "$PLIST" ]; then
 	launchctl bootout system "$PLIST" 2>/dev/null || launchctl unload "$PLIST" 2>/dev/null || true

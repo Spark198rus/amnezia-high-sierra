@@ -28,4 +28,19 @@ ln -sf "$DIR/awg-hs" /usr/local/bin/awg-hs
 
 launchctl bootstrap system "$PLIST" 2>/dev/null || launchctl load -w "$PLIST"
 
-echo "Installed. Connect with:  awg-hs up /path/to/your.conf"
+# The menu bar app, if this archive has it.
+if [ -d "$HERE/AWG-HS.app" ]; then
+	killall AWG-HS 2>/dev/null || true
+	rm -rf /Applications/AWG-HS.app
+	cp -R "$HERE/AWG-HS.app" /Applications/
+	chown -R root:wheel /Applications/AWG-HS.app
+	xattr -dr com.apple.quarantine /Applications/AWG-HS.app 2>/dev/null || true
+	# Start it for whoever is using the screen.
+	CONSOLE_UID=$(stat -f %u /dev/console)
+	if [ "$CONSOLE_UID" -ne 0 ]; then
+		launchctl asuser "$CONSOLE_UID" /usr/bin/open /Applications/AWG-HS.app || true
+	fi
+	echo "Installed. Use the shield in the menu bar, or connect with:  awg-hs up /path/to/your.conf"
+else
+	echo "Installed. Connect with:  awg-hs up /path/to/your.conf"
+fi

@@ -3,4 +3,10 @@ PLIST=/Library/LaunchDaemons/io.github.spark198rus.awg-hs.plist
 mkdir -p /usr/local/bin
 ln -sf "/Library/Application Support/AWG-HS/awg-hs" /usr/local/bin/awg-hs
 launchctl bootstrap system "$PLIST" 2>/dev/null || launchctl load -w "$PLIST"
+
+# Start the menu bar app for whoever is using the screen.
+CONSOLE_UID=$(stat -f %u /dev/console)
+if [ -d /Applications/AWG-HS.app ] && [ "$CONSOLE_UID" -ne 0 ]; then
+	launchctl asuser "$CONSOLE_UID" /usr/bin/open /Applications/AWG-HS.app || true
+fi
 exit 0

@@ -29,6 +29,11 @@ if [ -f "$KS" ]; then
 	fi
 fi
 
+# The menu bar app, and the login item it sets up for each user.
+killall AWG-HS 2>/dev/null || true
+rm -rf /Applications/AWG-HS.app
+rm -f /Users/*/Library/LaunchAgents/io.github.spark198rus.awg-hs.menu.plist
+
 rm -f "$PLIST" /var/run/awg-hs.sock
 if [ "$(readlink /usr/local/bin/awg-hs 2>/dev/null)" = "$DIR/awg-hs" ]; then
 	rm -f /usr/local/bin/awg-hs

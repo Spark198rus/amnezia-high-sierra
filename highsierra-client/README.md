@@ -4,7 +4,7 @@ A small AmneziaWG-only client for Macs that the AmneziaVPN app no longer
 supports. The AmneziaVPN app needs macOS 12 or newer; this client targets
 macOS 10.13 on Intel Macs.
 
-It has two parts in one program, `awg-hs`:
+It has three parts:
 
 - **A background service** (`awg-hs daemon`), started by launchd as root. It
   creates the tunnel interface, runs AmneziaWG, sets up routes and DNS, and
@@ -12,12 +12,12 @@ It has two parts in one program, `awg-hs`:
 - **A command-line tool** (`awg-hs up`, `down`, `status`), which asks the
   service to connect or disconnect. Any administrator account can use it
   without `sudo`.
-
-A menu-bar app is planned next; it will use the same service.
+- **A menu bar app** (`AWG-HS.app`), which does the same with a click.
 
 > **Status:** version 0.1 has been used on a real High Sierra Mac: it
-> installs, connects, and blocked sites open. The kill switch (0.2) has **not
-> yet been run on a real Mac**.
+> installs, connects, and blocked sites open. The kill switch (0.2) and the
+> menu bar app (0.3) have **not yet been run on a real Mac**. See
+> [Versions](#versions) for how to go back to an earlier one.
 
 ## What it supports
 
@@ -53,13 +53,14 @@ artifacts of the latest "High Sierra client" run on the repository's Actions
 tab. (On a fork, Actions must be enabled first.) Then in Terminal:
 
 ```sh
-tar xzf awg-hs-0.2.0-macos-x86_64.tar.gz
-cd awg-hs-0.2.0-macos-x86_64
+tar xzf awg-hs-0.3.0-macos-x86_64.tar.gz
+cd awg-hs-0.3.0-macos-x86_64
 sudo ./install.sh
 ```
 
 This installs the program to `/Library/Application Support/AWG-HS/`, links it
-to `/usr/local/bin/awg-hs`, and starts the service. To use the `.pkg` instead,
+to `/usr/local/bin/awg-hs`, starts the service, and puts the menu bar app in
+Applications and starts it. To use the `.pkg` instead,
 right-click it and choose **Open**, since it isn't signed.
 
 ## Using it
@@ -74,6 +75,28 @@ awg-hs up                                # reconnect with the last config
 
 `awg-hs check FILE` validates a config without connecting, and
 `awg-hs convert 'vpn://...' > my.conf` saves the config inside a key as a file.
+
+## Menu bar app
+
+The installer puts `AWG-HS.app` in Applications and starts it. It shows a
+shield in the menu bar:
+
+| Shield | Meaning |
+|---|---|
+| filled | connected |
+| outline | disconnected |
+| half filled | connecting or disconnecting |
+| with "!" | disconnected, and the kill switch is blocking the internet |
+| crossed out | the awg-hs service can't be reached |
+
+Its menu shows the server, the last handshake and the traffic, and has
+**Connect** (to the last server), **Disconnect**, **Connect with a Config
+File…**, **Connect with a vpn:// Key…**, **Kill Switch**, **Open at Login**
+(on at first) and **Show Log**.
+
+The app only sends commands to the service, like the command-line tool.
+Quitting it leaves the VPN as it is, and the command line keeps working
+without it.
 
 ## Kill switch
 
@@ -129,6 +152,20 @@ that the server is running and that the config is current.
   kill switch on, the block stays until you reconnect or run `awg-hs down`.
 - All DNS changes live only in memory, so a restart always clears them.
 
+## Versions
+
+| Version | Commit | What changed | Build |
+|---|---|---|---|
+| 0.1.0 | `39adcb8` | First version. **Tested on a High Sierra Mac.** | [CI run](https://github.com/Spark198rus/amnezia-high-sierra/actions/runs/35964191037) |
+| 0.2.0 | `112d9af` | Kill switch | [CI run](https://github.com/Spark198rus/amnezia-high-sierra/actions/runs/35966702399) |
+| 0.3.0 | (latest) | Menu bar app | the latest "High Sierra client" run |
+
+GitHub keeps CI downloads for 90 days. To go back to an earlier version,
+download its archive, and in Terminal run its `install.sh` as above; it
+replaces the installed version and keeps your saved config. When going back
+to 0.1.0 or 0.2.0, quit the menu bar app and drag `AWG-HS.app` from
+Applications to the Trash, since those versions don't include it.
+
 ## Uninstalling
 
 ```sh
@@ -144,9 +181,15 @@ involved, so you can build on Linux as well as on a Mac.
 ```sh
 make test     # vet and unit tests
 make build    # build/awg-hs, checked to be x86_64 and to need only macOS 10.13
-make dist     # dist/awg-hs-VERSION-macos-x86_64.tar.gz
+make app      # build/AWG-HS.app, the menu bar app (needs macOS with Xcode 16)
+make dist     # dist/awg-hs-VERSION-macos-x86_64.tar.gz from what is built
 make pkg      # dist/awg-hs-VERSION.pkg (needs macOS)
 ```
+
+The menu bar app is Objective-C with AppKit, built with clang for x86_64
+and macOS 10.13; using an API newer than 10.13 without an availability
+check fails the build. CI builds it with Xcode 16, which can still target
+macOS 10.13.
 
 The GitHub Actions workflow `.github/workflows/highsierra-client.yml` runs
 these steps on every push that touches this folder.
@@ -167,3 +210,5 @@ these steps on every push that touches this folder.
 - `internal/control`: the JSON protocol on `/var/run/awg-hs.sock` between the
   command-line tool and the service.
 - `cmd/awg-hs`: the program itself.
+- `menubar`: the menu bar app. `AWGClient.m` speaks the same socket protocol
+  as the command-line tool.

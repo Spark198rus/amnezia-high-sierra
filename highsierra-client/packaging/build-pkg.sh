@@ -15,6 +15,10 @@ cp build/awg-hs packaging/uninstall.sh "$APP/"
 cp "packaging/$LABEL.plist" "$STAGE/Library/LaunchDaemons/"
 chmod 755 "$APP/awg-hs" "$APP/uninstall.sh" packaging/pkg-scripts/*
 chmod 644 "$STAGE/Library/LaunchDaemons/$LABEL.plist"
+if [ -d build/AWG-HS.app ]; then
+	mkdir -p "$STAGE/Applications"
+	cp -R build/AWG-HS.app "$STAGE/Applications/"
+fi
 
 # Where pkgbuild offers a choice, use the payload format older Installers read.
 COMPRESSION=
@@ -24,6 +28,6 @@ fi
 
 mkdir -p dist
 # shellcheck disable=SC2086
-pkgbuild --root "$STAGE" --scripts packaging/pkg-scripts \
+COPYFILE_DISABLE=1 pkgbuild --root "$STAGE" --scripts packaging/pkg-scripts \
 	--identifier "$LABEL" --version "$VERSION" --install-location / \
 	--ownership recommended $COMPRESSION "dist/awg-hs-$VERSION.pkg"

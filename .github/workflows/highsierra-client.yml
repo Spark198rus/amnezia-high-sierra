@@ -35,13 +35,8 @@ jobs:
       - name: Vet and test
         run: make test
 
-      - name: Build the release archive
-        run: make dist
-
-      - uses: actions/upload-artifact@v6
-        with:
-          name: awg-hs-macos-x86_64
-          path: highsierra-client/dist/*.tar.gz
+      - name: Build the service
+        run: make build
 
       - uses: actions/upload-artifact@v6
         with:
@@ -62,9 +57,11 @@ jobs:
       - name: Test the Go 1.20 backport
         run: go test ./device/ ./ratelimiter/ ./replay/ ./tai64n/
 
+  # The menu bar app needs Apple's SDK, so it is built here, and the release
+  # archive and installer are put together here too.
   package:
     needs: build
-    runs-on: macos-latest
+    runs-on: macos-15
     defaults:
       run:
         working-directory: highsierra-client
@@ -76,8 +73,24 @@ jobs:
           name: awg-hs-binary
           path: highsierra-client/build
 
-      - name: Build the installer package
-        run: packaging/build-pkg.sh "$(cat VERSION)"
+      # Xcode 16 still builds for macOS 10.13.
+      - name: Select Xcode 16
+        run: |
+          sudo xcode-select -s "$(ls -d /Applications/Xcode_16*.app | sort -V | tail -1)"
+          xcodebuild -version
+
+      - name: Build the menu bar app
+        run: make app
+
+      - name: Build the release archive and installer
+        run: |
+          chmod 755 build/awg-hs
+          make dist pkg
+
+      - uses: actions/upload-artifact@v6
+        with:
+          name: awg-hs-macos-x86_64
+          path: highsierra-client/dist/*.tar.gz
 
       - uses: actions/upload-artifact@v6
         with:
