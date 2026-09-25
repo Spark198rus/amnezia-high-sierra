@@ -35,6 +35,8 @@ type Request struct {
 	Config string `json:"config,omitempty"`
 	Name   string `json:"name,omitempty"` // a label for the connection
 	Enable *bool  `json:"enable,omitempty"`
+	// Lang is the language for messages in the reply: "ru" or "en".
+	Lang string `json:"lang,omitempty"`
 }
 
 // Response is the daemon's answer. Status is set for every successful

@@ -42,6 +42,12 @@ static NSString *AWGBytes(long long n) {
     return [NSByteCountFormatter stringFromByteCount:n countStyle:NSByteCountFormatterCountStyleBinary];
 }
 
+// AWGLanguage is the language the app shows, which macOS picks from the
+// system languages; the service words its messages to match.
+static NSString *AWGLanguage(void) {
+    return NSBundle.mainBundle.preferredLocalizations.firstObject ?: @"en";
+}
+
 @implementation AppDelegate {
     NSStatusItem *_item;
     NSMenu *_menu;
@@ -89,6 +95,16 @@ static NSString *AWGBytes(long long n) {
     timer.tolerance = 1;
 }
 
+// Opening the app again (from Launchpad, Finder or Spotlight) while it runs
+// shows its menu, so something visible happens.
+- (BOOL)applicationShouldHandleReopen:(NSApplication *)sender hasVisibleWindows:(BOOL)flag {
+    // Wait for Launchpad to close, or taking focus back would close the menu.
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.3 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        [self->_item.button performClick:nil];
+    });
+    return NO;
+}
+
 // installEditMenu gives text fields copy and paste. The app shows no menu
 // bar of its own, but key equivalents still go through the main menu.
 - (void)installEditMenu {
@@ -115,39 +131,41 @@ static NSString *AWGBytes(long long n) {
         return;
     }
     _polling = YES;
-    [self send:@{@"command" : @"status"} busyText:nil];
+    [self send:@{@"command" : @"status"} busyText:nil failure:nil];
 }
 
 // send runs one request off the main thread, then shows the result. With
-// busyText it is a user's command: the icon shows it running, and errors are
-// reported.
-- (void)send:(NSDictionary *)request busyText:(NSString *)busyText {
+// busyText it is a user's command: the icon shows it running, and a failure
+// is reported under the failure headline.
+- (void)send:(NSDictionary *)request busyText:(NSString *)busyText failure:(NSString *)failure {
     BOOL command = busyText != nil;
     if (command) {
         _busyText = busyText;
         [self refreshUI];
     }
+    NSMutableDictionary *withLanguage = [request mutableCopy];
+    withLanguage[@"lang"] = AWGLanguage();
     dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
         NSError *error = nil;
-        NSDictionary *reply = AWGCall(request, &error);
+        NSDictionary *reply = AWGCall(withLanguage, &error);
         dispatch_async(dispatch_get_main_queue(), ^{
             if (command) {
                 self->_busyText = nil;
             } else {
                 self->_polling = NO;
             }
-            [self handleReply:reply error:error report:command];
+            [self handleReply:reply error:error failure:command ? failure : nil];
         });
     });
 }
 
-- (void)handleReply:(NSDictionary *)reply error:(NSError *)error report:(BOOL)report {
+- (void)handleReply:(NSDictionary *)reply error:(NSError *)error failure:(NSString *)failure {
     if (!reply) {
         _status = nil;
         _serviceProblem = AWGDescribeError(error);
         [self refreshUI];
-        if (report) {
-            [self showAlert:@"Can't reach the awg-hs service" text:_serviceProblem];
+        if (failure) {
+            [self showAlert:NSLocalizedString(@"Can't reach the awg-hs service", nil) text:_serviceProblem];
         }
         return;
     }
@@ -157,8 +175,8 @@ static NSString *AWGBytes(long long n) {
         _status = status;
     }
     [self refreshUI];
-    if (report && !AWGBool(reply, @"ok")) {
-        [self showAlert:@"AmneziaWG" text:AWGString(reply, @"error")];
+    if (failure && !AWGBool(reply, @"ok")) {
+        [self showAlert:failure text:AWGString(reply, @"error")];
     }
 }
 
@@ -182,13 +200,13 @@ static NSString *AWGBytes(long long n) {
         tip = _serviceProblem ?: @"AmneziaWG";
     } else if (AWGBool(_status, @"connected")) {
         state = AWGIconConnected;
-        tip = [NSString stringWithFormat:@"AmneziaWG: connected to %@", AWGString(_status, @"name")];
+        tip = [NSString stringWithFormat:NSLocalizedString(@"AmneziaWG: connected to %@", nil), AWGString(_status, @"name")];
     } else if (AWGBool(_status, @"blocking")) {
         state = AWGIconBlocked;
-        tip = @"AmneziaWG: the kill switch is blocking the internet";
+        tip = NSLocalizedString(@"AmneziaWG: the kill switch is blocking the internet", nil);
     } else {
         state = AWGIconDisconnected;
-        tip = @"AmneziaWG: disconnected";
+        tip = NSLocalizedString(@"AmneziaWG: disconnected", nil);
     }
     _item.button.image = AWGStatusIcon(state);
     _item.button.toolTip = tip;
@@ -227,82 +245,93 @@ static NSString *AWGBytes(long long n) {
     if (_busyText) {
         [self addInfo:_busyText];
     } else if (!st) {
-        [self addInfo:@"The awg-hs service can't be reached"];
+        [self addInfo:NSLocalizedString(@"The awg-hs service can't be reached", nil)];
         if (_serviceProblem) {
             [self addInfo:_serviceProblem];
         }
     } else if (connected) {
-        [self addInfo:[NSString stringWithFormat:@"Connected to %@", AWGString(st, @"name")]];
-        [self addInfo:[NSString stringWithFormat:@"Server: %@", AWGString(st, @"endpoint")]];
+        [self addInfo:[NSString stringWithFormat:NSLocalizedString(@"Connected to %@", nil), AWGString(st, @"name")]];
+        [self addInfo:[NSString stringWithFormat:NSLocalizedString(@"Server: %@", nil), AWGString(st, @"endpoint")]];
         [self addInfo:[self handshakeText:st]];
-        [self addInfo:[NSString stringWithFormat:@"Received %@, sent %@", AWGBytes(AWGNumber(st, @"rxBytes")),
-                                                 AWGBytes(AWGNumber(st, @"txBytes"))]];
+        [self addInfo:[NSString stringWithFormat:NSLocalizedString(@"Received %@, sent %@", nil),
+                                                 AWGBytes(AWGNumber(st, @"rxBytes")), AWGBytes(AWGNumber(st, @"txBytes"))]];
         for (NSString *warning in AWGStrings(st, @"warnings")) {
-            [self addInfo:[@"Warning: " stringByAppendingString:warning]];
+            [self addInfo:[NSString stringWithFormat:NSLocalizedString(@"Warning: %@", nil), warning]];
         }
     } else if (blocking) {
-        [self addInfo:@"Disconnected, and the kill switch is blocking"];
-        [self addInfo:@"the internet until you reconnect or disconnect"];
+        [self addInfo:NSLocalizedString(@"Disconnected: the kill switch is blocking the internet", nil)];
+        [self addInfo:NSLocalizedString(@"until you connect again or disconnect", nil)];
     } else {
-        [self addInfo:@"Disconnected"];
+        [self addInfo:NSLocalizedString(@"Disconnected", nil)];
     }
     [_menu addItem:[NSMenuItem separatorItem]];
 
     BOOL ready = st != nil && !_busyText;
     if (connected) {
-        [self addAction:@"Disconnect" action:@selector(disconnect:) enabled:ready];
+        [self addAction:NSLocalizedString(@"Disconnect", nil) action:@selector(disconnect:) enabled:ready];
     } else {
         NSString *saved = AWGString(st, @"savedName");
-        NSString *title = saved.length ? [NSString stringWithFormat:@"Connect to %@", saved] : @"Connect";
+        NSString *title = saved.length ? [NSString stringWithFormat:NSLocalizedString(@"Connect to %@", nil), saved]
+                                       : NSLocalizedString(@"Connect", nil);
         [self addAction:title action:@selector(connectSaved:) enabled:ready && AWGBool(st, @"hasSavedConfig")];
         if (blocking) {
-            [self addAction:@"Disconnect and Lift the Kill Switch" action:@selector(disconnect:) enabled:ready];
+            [self addAction:NSLocalizedString(@"Disconnect and Lift the Kill Switch", nil)
+                     action:@selector(disconnect:)
+                    enabled:ready];
         }
     }
-    [self addAction:@"Connect with a Config File…" action:@selector(connectFile:) enabled:ready];
-    [self addAction:@"Connect with a vpn:// Key…" action:@selector(connectKey:) enabled:ready];
+    [self addAction:NSLocalizedString(@"Connect with a Config File…", nil) action:@selector(connectFile:) enabled:ready];
+    [self addAction:NSLocalizedString(@"Connect with a vpn:// Key…", nil) action:@selector(connectKey:) enabled:ready];
     [_menu addItem:[NSMenuItem separatorItem]];
 
-    NSMenuItem *killSwitch = [self addAction:@"Kill Switch" action:@selector(toggleKillSwitch:) enabled:ready];
+    NSMenuItem *killSwitch = [self addAction:NSLocalizedString(@"Kill Switch", nil)
+                                      action:@selector(toggleKillSwitch:)
+                                     enabled:ready];
     killSwitch.state = AWGBool(st, @"killSwitch") ? NSControlStateValueOn : NSControlStateValueOff;
-    killSwitch.toolTip = @"While connected, block everything that would leave this Mac outside the tunnel.";
-    NSMenuItem *login = [self addAction:@"Open at Login" action:@selector(toggleOpenAtLogin:) enabled:YES];
+    killSwitch.toolTip = NSLocalizedString(@"While connected, block everything that would leave this Mac outside the tunnel.", nil);
+    NSMenuItem *login = [self addAction:NSLocalizedString(@"Open at Login", nil)
+                                 action:@selector(toggleOpenAtLogin:)
+                                enabled:YES];
     login.state = [self opensAtLogin] ? NSControlStateValueOn : NSControlStateValueOff;
-    [self addAction:@"Show Log" action:@selector(showLog:) enabled:YES];
+    [self addAction:NSLocalizedString(@"Show Log", nil) action:@selector(showLog:) enabled:YES];
     [_menu addItem:[NSMenuItem separatorItem]];
-    NSMenuItem *quit = [self addAction:@"Quit AWG-HS" action:@selector(quit:) enabled:YES];
-    quit.toolTip = @"Closes this menu. The VPN stays as it is.";
+    NSMenuItem *quit = [self addAction:NSLocalizedString(@"Quit AWG-HS", nil) action:@selector(quit:) enabled:YES];
+    quit.toolTip = NSLocalizedString(@"Closes this menu. The VPN stays as it is.", nil);
 }
 
 - (NSString *)handshakeText:(NSDictionary *)st {
     long long last = AWGNumber(st, @"lastHandshake");
     if (last == 0) {
-        return @"No handshake yet";
+        return NSLocalizedString(@"No handshake yet", nil);
     }
     long long ago = (long long)NSDate.date.timeIntervalSince1970 - last;
     if (ago < 0) {
         ago = 0;
     }
     if (ago < 120) {
-        return [NSString stringWithFormat:@"Last handshake %lld s ago", ago];
+        return [NSString stringWithFormat:NSLocalizedString(@"Last handshake %lld s ago", nil), ago];
     }
-    return [NSString stringWithFormat:@"Last handshake %lld min ago", ago / 60];
+    return [NSString stringWithFormat:NSLocalizedString(@"Last handshake %lld min ago", nil), ago / 60];
 }
 
 #pragma mark - Actions
 
 - (void)disconnect:(id)sender {
-    [self send:@{@"command" : @"down"} busyText:@"Disconnecting…"];
+    [self send:@{@"command" : @"down"}
+        busyText:NSLocalizedString(@"Disconnecting…", nil)
+         failure:NSLocalizedString(@"Couldn't disconnect", nil)];
 }
 
 - (void)connectSaved:(id)sender {
-    [self send:@{@"command" : @"up"} busyText:@"Connecting…"];
+    [self send:@{@"command" : @"up"}
+        busyText:NSLocalizedString(@"Connecting…", nil)
+         failure:NSLocalizedString(@"Couldn't connect", nil)];
 }
 
 - (void)connectFile:(id)sender {
     NSOpenPanel *panel = [NSOpenPanel openPanel];
-    panel.title = @"Choose an AmneziaWG config";
-    panel.message = @"Choose a .conf file saved from the AmneziaVPN app.";
+    panel.title = NSLocalizedString(@"Choose an AmneziaWG config", nil);
+    panel.message = NSLocalizedString(@"Choose a .conf file saved from the AmneziaVPN app.", nil);
     panel.canChooseDirectories = NO;
     panel.allowsMultipleSelection = NO;
     [NSApp activateIgnoringOtherApps:YES];
@@ -312,20 +341,22 @@ static NSString *AWGBytes(long long n) {
     NSError *error = nil;
     NSString *text = [NSString stringWithContentsOfURL:panel.URL encoding:NSUTF8StringEncoding error:&error];
     if (!text) {
-        [self showAlert:@"The file can't be read" text:error.localizedDescription];
+        [self showAlert:NSLocalizedString(@"The file can't be read", nil) text:error.localizedDescription];
         return;
     }
     NSString *name = panel.URL.lastPathComponent.stringByDeletingPathExtension;
     [self send:@{@"command" : @"up", @"config" : text, @"name" : name}
-        busyText:[NSString stringWithFormat:@"Connecting to %@…", name]];
+        busyText:[NSString stringWithFormat:NSLocalizedString(@"Connecting to %@…", nil), name]
+         failure:NSLocalizedString(@"Couldn't connect", nil)];
 }
 
 - (void)connectKey:(id)sender {
     NSAlert *alert = [[NSAlert alloc] init];
-    alert.messageText = @"Connect with a vpn:// key";
-    alert.informativeText = @"Paste the key for your self-hosted AmneziaWG server, copied from the AmneziaVPN app.";
-    [alert addButtonWithTitle:@"Connect"];
-    [alert addButtonWithTitle:@"Cancel"];
+    alert.messageText = NSLocalizedString(@"Connect with a vpn:// key", nil);
+    alert.informativeText =
+        NSLocalizedString(@"Paste the key for your self-hosted AmneziaWG server, copied from the AmneziaVPN app.", nil);
+    [alert addButtonWithTitle:NSLocalizedString(@"Connect", nil)];
+    [alert addButtonWithTitle:NSLocalizedString(@"Cancel", nil)];
     NSTextField *field = [[NSTextField alloc] initWithFrame:NSMakeRect(0, 0, 380, 24)];
     field.placeholderString = @"vpn://…";
     alert.accessoryView = field;
@@ -336,16 +367,21 @@ static NSString *AWGBytes(long long n) {
     }
     NSString *key = [field.stringValue stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
     if (![key hasPrefix:@"vpn://"]) {
-        [self showAlert:@"That isn't a vpn:// key" text:@"A key starts with vpn:// followed by a long run of letters and digits."];
+        [self showAlert:NSLocalizedString(@"That isn't a vpn:// key", nil)
+                   text:NSLocalizedString(@"A key starts with vpn:// followed by a long run of letters and digits.", nil)];
         return;
     }
-    [self send:@{@"command" : @"up", @"config" : key, @"name" : @"vpn key"} busyText:@"Connecting…"];
+    [self send:@{@"command" : @"up", @"config" : key, @"name" : NSLocalizedString(@"vpn:// key", nil)}
+        busyText:NSLocalizedString(@"Connecting…", nil)
+         failure:NSLocalizedString(@"Couldn't connect", nil)];
 }
 
 - (void)toggleKillSwitch:(NSMenuItem *)sender {
     BOOL on = sender.state != NSControlStateValueOn;
     [self send:@{@"command" : @"killswitch", @"enable" : on ? @YES : @NO}
-        busyText:on ? @"Turning on the kill switch…" : @"Turning off the kill switch…"];
+        busyText:on ? NSLocalizedString(@"Turning on the kill switch…", nil)
+                    : NSLocalizedString(@"Turning off the kill switch…", nil)
+         failure:NSLocalizedString(@"Couldn't change the kill switch", nil)];
 }
 
 - (void)toggleOpenAtLogin:(NSMenuItem *)sender {
@@ -389,7 +425,7 @@ static NSString *AWGBytes(long long n) {
     NSError *error = nil;
     if (!on) {
         if (![NSFileManager.defaultManager removeItemAtPath:path error:&error] && [self opensAtLogin]) {
-            [self showAlert:@"Couldn't turn off Open at Login" text:error.localizedDescription];
+            [self showAlert:NSLocalizedString(@"Couldn't turn off Open at Login", nil) text:error.localizedDescription];
         }
         return;
     }
@@ -404,7 +440,7 @@ static NSString *AWGBytes(long long n) {
                                              attributes:nil
                                                   error:NULL];
     if (![agent writeToFile:path atomically:YES]) {
-        [self showAlert:@"Couldn't turn on Open at Login" text:path];
+        [self showAlert:NSLocalizedString(@"Couldn't turn on Open at Login", nil) text:path];
     }
 }
 

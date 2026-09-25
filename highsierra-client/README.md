@@ -14,10 +14,12 @@ It has three parts:
   without `sudo`.
 - **A menu bar app** (`AWG-HS.app`), which does the same with a click.
 
-> **Status:** version 0.1 has been used on a real High Sierra Mac: it
-> installs, connects, and blocked sites open. The kill switch (0.2) and the
-> menu bar app (0.3) have **not yet been run on a real Mac**. See
-> [Versions](#versions) for how to go back to an earlier one.
+> **Status:** version 0.3 has been used on a real High Sierra Mac: it
+> installs, connects, blocked sites open, and the menu bar app works. The
+> changes in 0.4 (Russian, the app icon) have **not yet been run on a real
+> Mac**. See [Versions](#versions) for how to go back to an earlier one.
+
+Everything is in English or Russian, following the macOS system language.
 
 ## What it supports
 
@@ -53,8 +55,8 @@ artifacts of the latest "High Sierra client" run on the repository's Actions
 tab. (On a fork, Actions must be enabled first.) Then in Terminal:
 
 ```sh
-tar xzf awg-hs-0.3.0-macos-x86_64.tar.gz
-cd awg-hs-0.3.0-macos-x86_64
+tar xzf awg-hs-0.4.0-macos-x86_64.tar.gz
+cd awg-hs-0.4.0-macos-x86_64
 sudo ./install.sh
 ```
 
@@ -78,8 +80,9 @@ awg-hs up                                # reconnect with the last config
 
 ## Menu bar app
 
-The installer puts `AWG-HS.app` in Applications and starts it. It shows a
-shield in the menu bar:
+The installer puts `AWG-HS.app` in Applications and starts it, so it is also
+in Launchpad and Spotlight. Opening it again while it runs shows its menu. It
+shows a shield in the menu bar:
 
 | Shield | Meaning |
 |---|---|
@@ -158,13 +161,26 @@ that the server is running and that the config is current.
 |---|---|---|---|
 | 0.1.0 | `39adcb8` | First version. **Tested on a High Sierra Mac.** | [CI run](https://github.com/Spark198rus/amnezia-high-sierra/actions/runs/35964191037) |
 | 0.2.0 | `112d9af` | Kill switch | [CI run](https://github.com/Spark198rus/amnezia-high-sierra/actions/runs/35966702399) |
-| 0.3.0 | (latest) | Menu bar app | the latest "High Sierra client" run |
+| 0.3.0 | `1d52485` | Menu bar app. **Tested on a High Sierra Mac.** | [CI run](https://github.com/Spark198rus/amnezia-high-sierra/actions/runs/35992308658) |
+| 0.4.0 | (latest) | Russian, app icon, opening the app shows its menu | the latest "High Sierra client" run |
 
 GitHub keeps CI downloads for 90 days. To go back to an earlier version,
 download its archive, and in Terminal run its `install.sh` as above; it
 replaces the installed version and keeps your saved config. When going back
 to 0.1.0 or 0.2.0, quit the menu bar app and drag `AWG-HS.app` from
 Applications to the Trash, since those versions don't include it.
+
+## Languages
+
+The menu bar app and the command-line tool are in Russian when Russian is the
+first language in System Preferences > Language & Region, and in English
+otherwise. The command-line tool also follows `LANG` (Terminal sets it from the
+system language), so `LANG=en_US.UTF-8 awg-hs status` shows English.
+Messages that come from macOS tools stay in English.
+
+The Russian texts are in `internal/i18n/ru.go` (command-line tool and service
+messages) and `menubar/ru.lproj/Localizable.strings` (the app). Tests check
+that every text the code uses is translated.
 
 ## Uninstalling
 
@@ -211,4 +227,8 @@ these steps on every push that touches this folder.
   command-line tool and the service.
 - `cmd/awg-hs`: the program itself.
 - `menubar`: the menu bar app. `AWGClient.m` speaks the same socket protocol
-  as the command-line tool.
+  as the command-line tool. `make-icon.py` draws `AppIcon.png`, which
+  `make app` turns into the app icon.
+- `internal/i18n`: the Russian translation of the command-line tool and of
+  the service's messages. Each request names its language, and the service
+  answers in it.

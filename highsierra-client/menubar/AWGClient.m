@@ -95,7 +95,7 @@ NSDictionary *AWGCall(NSDictionary *request, NSError **error) {
         if (error) {
             *error = [NSError errorWithDomain:@"AWGClient"
                                          code:1
-                                     userInfo:@{NSLocalizedDescriptionKey : @"The awg-hs service sent an unexpected reply."}];
+                                     userInfo:@{NSLocalizedDescriptionKey : NSLocalizedString(@"The awg-hs service sent an unexpected reply.", nil)}];
         }
         return nil;
     }
@@ -107,13 +107,13 @@ NSString *AWGDescribeError(NSError *error) {
         switch (error.code) {
         case ENOENT:
         case ECONNREFUSED:
-            return @"The awg-hs service isn't running. Installing awg-hs again (sudo ./install.sh) starts it.";
+            return NSLocalizedString(@"The awg-hs service isn't running. Installing awg-hs again (sudo ./install.sh) starts it.", nil);
         case EACCES:
         case EPERM:
-            return @"Only administrator accounts can control the VPN.";
+            return NSLocalizedString(@"Only administrator accounts can control the VPN.", nil);
         case EAGAIN:
-            return @"The awg-hs service didn't answer in time.";
+            return NSLocalizedString(@"The awg-hs service didn't answer in time.", nil);
         }
     }
-    return error.localizedDescription ?: @"Something went wrong talking to the awg-hs service.";
+    return error.localizedDescription ?: NSLocalizedString(@"Something went wrong talking to the awg-hs service.", nil);
 }

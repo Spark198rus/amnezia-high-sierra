@@ -19,6 +19,7 @@ import (
 
 	"github.com/spark198rus/amnezia-high-sierra/highsierra-client/internal/config"
 	"github.com/spark198rus/amnezia-high-sierra/highsierra-client/internal/control"
+	"github.com/spark198rus/amnezia-high-sierra/highsierra-client/internal/i18n"
 	"github.com/spark198rus/amnezia-high-sierra/highsierra-client/internal/tunnel"
 )
 
@@ -159,9 +160,9 @@ func (d *daemon) handle(req control.Request) control.Response {
 		err = fmt.Errorf("unknown command %q", req.Command)
 	}
 	if err != nil {
-		return control.Response{Error: err.Error(), Status: d.status()}
+		return control.Response{Error: i18n.Message(req.Lang, err.Error()), Status: d.status(req.Lang)}
 	}
-	return control.Response{OK: true, Status: d.status()}
+	return control.Response{OK: true, Status: d.status(req.Lang)}
 }
 
 func (d *daemon) up(req control.Request) error {
@@ -255,7 +256,8 @@ func (d *daemon) setKillSwitch(on bool) error {
 	return nil
 }
 
-func (d *daemon) status() *control.Status {
+// status describes the tunnel, with warnings in lang.
+func (d *daemon) status(lang string) *control.Status {
 	st := &control.Status{KillSwitch: d.settings.killSwitchOn(), Blocking: d.ks.Active()}
 	if saved, err := loadSaved(); err == nil {
 		st.HasSavedConfig, st.SavedName = true, saved.Name
@@ -274,7 +276,9 @@ func (d *daemon) status() *control.Status {
 		st.LastHandshake = in.LastHandshake.Unix()
 	}
 	st.RxBytes, st.TxBytes = in.RxBytes, in.TxBytes
-	st.Warnings = in.Warnings
+	for _, w := range in.Warnings {
+		st.Warnings = append(st.Warnings, i18n.Message(lang, w))
+	}
 	return st
 }
 

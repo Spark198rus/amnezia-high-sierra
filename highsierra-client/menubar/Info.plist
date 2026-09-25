@@ -8,8 +8,15 @@
 	<string>AWG-HS</string>
 	<key>CFBundleExecutable</key>
 	<string>AWG-HS</string>
+	<key>CFBundleIconFile</key>
+	<string>AppIcon</string>
 	<key>CFBundleIdentifier</key>
 	<string>io.github.spark198rus.awg-hs.menu</string>
+	<key>CFBundleLocalizations</key>
+	<array>
+		<string>en</string>
+		<string>ru</string>
+	</array>
 	<key>CFBundleInfoDictionaryVersion</key>
 	<string>6.0</string>
 	<key>CFBundleName</key>

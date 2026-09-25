@@ -17,11 +17,13 @@ import (
 
 	"github.com/spark198rus/amnezia-high-sierra/highsierra-client/internal/config"
 	"github.com/spark198rus/amnezia-high-sierra/highsierra-client/internal/control"
+	"github.com/spark198rus/amnezia-high-sierra/highsierra-client/internal/i18n"
 )
 
 // version is set at build time with -ldflags "-X main.version=...".
 var version = "dev"
 
+// usage is printed through i18n.T, like every text the tool shows.
 const usage = `awg-hs: AmneziaWG for macOS 10.13 High Sierra
 
 Usage:
@@ -45,8 +47,9 @@ keeps blocking until "awg-hs up" or "awg-hs down".
 `
 
 func main() {
+	i18n.Lang = i18n.Detect()
 	if len(os.Args) < 2 {
-		fmt.Fprint(os.Stderr, usage)
+		fmt.Fprint(os.Stderr, i18n.T(usage))
 		os.Exit(2)
 	}
 	var err error
@@ -68,13 +71,13 @@ func main() {
 	case "version", "-version", "--version":
 		fmt.Println("awg-hs", version)
 	case "help", "-h", "-help", "--help":
-		fmt.Print(usage)
+		fmt.Print(i18n.T(usage))
 	default:
-		fmt.Fprintf(os.Stderr, "awg-hs: unknown command %q\n\n%s", cmd, usage)
+		fmt.Fprintf(os.Stderr, "awg-hs: "+i18n.T("unknown command %q")+"\n\n%s", cmd, i18n.T(usage))
 		os.Exit(2)
 	}
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "awg-hs:", err)
+		fmt.Fprintln(os.Stderr, "awg-hs:", i18n.Message(i18n.Lang, err.Error()))
 		os.Exit(1)
 	}
 }
@@ -86,7 +89,7 @@ func readInput(arg string) (text, name string, err error) {
 		b, err := io.ReadAll(io.LimitReader(os.Stdin, 1<<20))
 		return string(b), "stdin", err
 	case config.IsKey(arg):
-		return arg, "vpn key", nil
+		return arg, i18n.T("vpn:// key"), nil
 	default:
 		b, err := os.ReadFile(arg)
 		name := strings.TrimSuffix(filepath.Base(arg), filepath.Ext(arg))
@@ -109,21 +112,21 @@ func cmdUp(args []string) error {
 		}
 		req.Config, req.Name = text, name
 	default:
-		return errors.New("up takes one config")
+		return errors.New(i18n.T("up takes one config"))
 	}
-	fmt.Println("Connecting...")
+	fmt.Println(i18n.T("Connecting..."))
 	return call(req)
 }
 
 func cmdKillSwitch(args []string) error {
-	req := control.Request{Command: control.CmdKillSwitch}
+	req := control.Request{Command: control.CmdKillSwitch, Lang: i18n.Lang}
 	switch {
 	case len(args) == 0:
 	case len(args) == 1 && (args[0] == "on" || args[0] == "off"):
 		on := args[0] == "on"
 		req.Enable = &on
 	default:
-		return errors.New("usage: awg-hs killswitch [on | off]")
+		return errors.New(i18n.T("usage: awg-hs killswitch [on | off]"))
 	}
 	resp, err := control.Call(req)
 	if err != nil {
@@ -133,14 +136,14 @@ func cmdKillSwitch(args []string) error {
 		return errors.New(resp.Error)
 	}
 	st := resp.Status
-	fmt.Printf("Kill switch: %s\n", onOff(st.KillSwitch))
+	fmt.Printf(i18n.T("Kill switch: %s\n"), onOff(st.KillSwitch))
 	switch {
 	case st.KillSwitch && st.Connected:
-		fmt.Println("Nothing can leave this Mac outside the tunnel, apart from the local network.")
+		fmt.Println(i18n.T("Nothing can leave this Mac outside the tunnel, apart from the local network."))
 	case st.KillSwitch:
-		fmt.Println("It will block traffic outside the tunnel from the next \"awg-hs up\".")
+		fmt.Println(i18n.T("It will block traffic outside the tunnel from the next \"awg-hs up\"."))
 	default:
-		fmt.Println("If the tunnel stops working, traffic goes out directly.")
+		fmt.Println(i18n.T("If the tunnel stops working, traffic goes out directly."))
 	}
 	printBlocking(st)
 	return nil
@@ -151,6 +154,7 @@ func cmdSimple(command string) error {
 }
 
 func call(req control.Request) error {
+	req.Lang = i18n.Lang
 	resp, err := control.Call(req)
 	if err != nil {
 		return unreachable(err)
@@ -165,60 +169,60 @@ func call(req control.Request) error {
 }
 
 func unreachable(err error) error {
-	return fmt.Errorf("cannot reach the awg-hs service (%v).\n"+
-		"Is it installed? Only administrator accounts can use it; otherwise try sudo.", err)
+	return fmt.Errorf(i18n.T("cannot reach the awg-hs service (%v).\n"+
+		"Is it installed? Only administrator accounts can use it; otherwise try sudo."), err)
 }
 
 func onOff(b bool) string {
 	if b {
-		return "on"
+		return i18n.T("on")
 	}
-	return "off"
+	return i18n.T("off")
 }
 
 // printBlocking explains a kill switch that blocks without a tunnel.
 func printBlocking(st *control.Status) {
 	if st.Blocking && !st.Connected {
 		fmt.Println()
-		fmt.Println("The kill switch is blocking all traffic outside the tunnel, because the tunnel")
-		fmt.Println("is not running. Run \"awg-hs up\" to reconnect, or \"awg-hs down\" to go back")
-		fmt.Println("to the normal internet.")
+		fmt.Print(i18n.T("The kill switch is blocking all traffic outside the tunnel, because the tunnel\n" +
+			"is not running. Run \"awg-hs up\" to reconnect, or \"awg-hs down\" to go back\n" +
+			"to the normal internet.\n"))
 	}
 }
 
 func printStatus(st *control.Status) {
 	if !st.Connected {
-		fmt.Println("Disconnected.")
+		fmt.Println(i18n.T("Disconnected."))
 		if st.HasSavedConfig && !st.Blocking {
-			fmt.Printf("Run \"awg-hs up\" to reconnect to %s.\n", st.SavedName)
+			fmt.Printf(i18n.T("Run \"awg-hs up\" to reconnect to %s.\n"), st.SavedName)
 		}
 		printBlocking(st)
 		return
 	}
-	fmt.Printf("Connected: %s (%s)\n", st.Name, st.Interface)
-	fmt.Printf("  Server:      %s\n", st.Endpoint)
-	fmt.Printf("  Addresses:   %s\n", strings.Join(st.Addresses, ", "))
+	fmt.Printf(i18n.T("Connected: %s (%s)\n"), st.Name, st.Interface)
+	fmt.Printf(i18n.T("  Server:      %s\n"), st.Endpoint)
+	fmt.Printf(i18n.T("  Addresses:   %s\n"), strings.Join(st.Addresses, ", "))
 	since := time.Unix(st.Since, 0)
-	fmt.Printf("  Since:       %s (%s)\n", since.Format("2006-01-02 15:04:05"), ago(since))
+	fmt.Printf(i18n.T("  Since:       %s (%s)\n"), since.Format("2006-01-02 15:04:05"), ago(since))
 	if st.LastHandshake != 0 {
-		fmt.Printf("  Handshake:   %s ago\n", ago(time.Unix(st.LastHandshake, 0)))
+		fmt.Printf(i18n.T("  Handshake:   %s ago\n"), ago(time.Unix(st.LastHandshake, 0)))
 	} else {
-		fmt.Println("  Handshake:   none yet")
+		fmt.Print(i18n.T("  Handshake:   none yet\n"))
 		if time.Since(since) > 15*time.Second {
-			fmt.Println("               (the server is not answering: check its address and port,")
-			fmt.Println("                and that the config is current)")
+			fmt.Print(i18n.T("               (the server is not answering: check its address and port,\n" +
+				"                and that the config is current)\n"))
 		}
 	}
-	fmt.Printf("  Traffic:     %s received, %s sent\n", bytesText(st.RxBytes), bytesText(st.TxBytes))
-	fmt.Printf("  Kill switch: %s\n", onOff(st.KillSwitch))
+	fmt.Printf(i18n.T("  Traffic:     %s received, %s sent\n"), bytesText(st.RxBytes), bytesText(st.TxBytes))
+	fmt.Printf(i18n.T("  Kill switch: %s\n"), onOff(st.KillSwitch))
 	for _, w := range st.Warnings {
-		fmt.Println("  Warning:    ", w)
+		fmt.Printf(i18n.T("  Warning:     %s\n"), w)
 	}
 }
 
 func cmdCheck(args []string) error {
 	if len(args) != 1 {
-		return errors.New("check takes one config")
+		return errors.New(i18n.T("check takes one config"))
 	}
 	text, _, err := readInput(args[0])
 	if err != nil {
@@ -229,8 +233,8 @@ func cmdCheck(args []string) error {
 		return err
 	}
 	in := cfg.Interface
-	fmt.Println("Config OK.")
-	fmt.Printf("  Addresses:  %s\n", joinPrefixes(in.Addresses))
+	fmt.Println(i18n.T("Config OK."))
+	fmt.Printf(i18n.T("  Addresses:  %s\n"), joinPrefixes(in.Addresses))
 	var dns []string
 	for _, a := range in.DNS {
 		dns = append(dns, a.String())
@@ -244,14 +248,14 @@ func cmdCheck(args []string) error {
 	sort.Strings(awg)
 	fmt.Printf("  AmneziaWG:  %s\n", orNone(strings.Join(awg, " ")))
 	for i, p := range cfg.Peers {
-		fmt.Printf("  Peer %d:     %s, AllowedIPs %s\n", i+1, orNone(p.Endpoint), joinPrefixes(p.AllowedIPs))
+		fmt.Printf(i18n.T("  Peer %d:     %s, AllowedIPs %s\n"), i+1, orNone(p.Endpoint), joinPrefixes(p.AllowedIPs))
 	}
 	return nil
 }
 
 func cmdConvert(args []string) error {
 	if len(args) != 1 {
-		return errors.New("convert takes one vpn:// key")
+		return errors.New(i18n.T("convert takes one vpn:// key"))
 	}
 	text, _, err := readInput(args[0])
 	if err != nil {
@@ -278,7 +282,7 @@ func joinPrefixes(ps []netip.Prefix) string {
 
 func orNone(s string) string {
 	if s == "" {
-		return "(none)"
+		return i18n.T("(none)")
 	}
 	return s
 }
@@ -294,12 +298,13 @@ func ago(t time.Time) string {
 func bytesText(n uint64) string {
 	const unit = 1024
 	if n < unit {
-		return fmt.Sprintf("%d B", n)
+		return fmt.Sprintf("%d %s", n, i18n.T("B"))
 	}
+	units := []string{i18n.T("KiB"), i18n.T("MiB"), i18n.T("GiB"), i18n.T("TiB"), i18n.T("PiB"), i18n.T("EiB")}
 	div, exp := uint64(unit), 0
 	for m := n / unit; m >= unit; m /= unit {
 		div *= unit
 		exp++
 	}
-	return fmt.Sprintf("%.1f %ciB", float64(n)/float64(div), "KMGTPE"[exp])
+	return fmt.Sprintf("%.1f %s", float64(n)/float64(div), units[exp])
 }

@@ -28,12 +28,24 @@ build: check-go
 
 # The menu bar app. Any use of an API newer than macOS 10.13 without an
 # availability check fails the build.
-app: $(APP_SRC) menubar/*.h menubar/Info.plist
-	rm -rf $(APP)
-	mkdir -p $(APP)/Contents/MacOS
+app: $(APP_SRC) menubar/*.h menubar/Info.plist menubar/AppIcon.png menubar/*.lproj/*.strings
+	rm -rf $(APP) build/AppIcon.iconset
+	mkdir -p $(APP)/Contents/MacOS $(APP)/Contents/Resources build/AppIcon.iconset
 	clang $(APP_CFLAGS) -framework Cocoa -o $(APP)/Contents/MacOS/AWG-HS $(APP_SRC)
 	sed 's/@VERSION@/$(VERSION)/g' menubar/Info.plist > $(APP)/Contents/Info.plist
 	printf 'APPL????' > $(APP)/Contents/PkgInfo
+	# The icon, from menubar/AppIcon.png (drawn by menubar/make-icon.py).
+	for s in 16 32 128 256 512; do \
+		sips -z $$s $$s menubar/AppIcon.png --out build/AppIcon.iconset/icon_$${s}x$${s}.png >/dev/null && \
+		sips -z $$((s * 2)) $$((s * 2)) menubar/AppIcon.png --out build/AppIcon.iconset/icon_$${s}x$${s}@2x.png >/dev/null || exit 1; \
+	done
+	iconutil -c icns -o $(APP)/Contents/Resources/AppIcon.icns build/AppIcon.iconset
+	# Translations, checked and converted to the binary form Xcode would ship.
+	for dir in menubar/*.lproj; do \
+		mkdir -p $(APP)/Contents/Resources/$$(basename $$dir) && \
+		plutil -lint $$dir/Localizable.strings && \
+		plutil -convert binary1 -o $(APP)/Contents/Resources/$$(basename $$dir)/Localizable.strings $$dir/Localizable.strings || exit 1; \
+	done
 	packaging/check-macho.sh $(APP)/Contents/MacOS/AWG-HS 10.13
 
 test: check-go
